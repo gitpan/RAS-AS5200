@@ -3,7 +3,7 @@
 #########################################################
 
 package RAS::AS5200;
-$VERSION = "1.03";
+$VERSION = "1.04";
 
 use strict "subs"; use strict "refs";
 
@@ -150,7 +150,6 @@ sub userports {
      next unless (/^\s+\d+ tty \d+\s/ || /^\s+Se\d+\:\d+\s/);
      $port = unpack("x0 a12", $_) ; $port =~ s/^\s*\d* //; $port =~ s/\s*$//;
      $user = unpack("x13 a10", $_); $user =~ s/^\s*//; $user =~ s/\s*$//;
-print "USER \'$user\' is on port \'$port\'\n";
      push(@{$userports{$user}},$port);
    }
    return(%userports);
@@ -233,7 +232,7 @@ __END__;
 
 RAS::AS5200.pm - PERL Interface to Cisco AS5200 Access Router
 
-Version 1.03, April 20, 2000
+Version 1.04, June 9, 2000
 
 
 =head1 SYNOPSIS
@@ -478,6 +477,8 @@ This module has been tested with an AS5300 with some degree of success. Last I h
 
 
 =head1 CHANGES IN THIS VERSION
+
+1.04     Fixed some small typos.
 
 1.03     Added the userports() and killexcessoutoctets() methods. Added better prompt support (YAY!). Made error messages more useful. Made the module work with or without a login prompt, as older IOS (11.2 specifically) doesn't require a login name, only a password.
 
