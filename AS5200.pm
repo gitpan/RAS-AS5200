@@ -3,7 +3,7 @@
 #########################################################
 
 package RAS::AS5200;
-$VERSION = "1.00";
+$VERSION = "1.01";
 
 # The new method, of course
 sub new {
@@ -16,6 +16,7 @@ sub new {
 
 sub printenv {
    my($confarray) = $_[0];
+   print "VERSION = $VERSION\n";
    while (($key,$value) = each(%$confarray)) { print "$key = $value\n"; }
 }
 
@@ -28,12 +29,19 @@ sub run_command {
    while ($command = shift) {
       my(@output);
       $session = new Net::Telnet (-prompt => '/as5200[#>]$/');
+      $session->errmode("return");
       $session->open($confarray->{hostname});
+      if ($session->errmsg) {
+         warn "RAS::AS5200 ERROR: ", $session->errmsg, "\n"; return();
+      }
       $session->waitfor('/Password: $/');
       $session->print("");
       $session->waitfor('/Password: $/');
       $session->print($confarray->{password});
       $session->waitfor($session->prompt);
+      if ($session->errmsg) {
+         warn "RAS::AS5200 ERROR: ", $session->errmsg, "\n"; return();
+      }
 
       # If the command was prefixed with the ENABLE
       # keyword, go into enabled mode
@@ -42,11 +50,17 @@ sub run_command {
          $session->waitfor('/Password: $/');
          $session->print($confarray->{enablepassword});
          $session->waitfor($session->prompt);
+         if ($session->errmsg) {
+            warn "RAS::AS5200 ERROR: ", $session->errmsg, "\n"; return();
+         }
       }
       $session->print($command);
 
       while (1) {
          local($line); $session->print(""); $line = $session->getline;
+         if ($session->errmsg) {
+            warn "RAS::AS5200 ERROR: ", $session->errmsg, "\n"; return();
+         }
          if ($line eq "[confirm]") { $session-print("y"); next; }
          if ($line =~ /^as5200[#>]/) { $session->print("exit"); $session->close; last; }
          $line =~ s/^\s?--More--\s*\010+\s+\010+//;
@@ -127,7 +141,7 @@ __END__;
 
 RAS::AS5200.pm - PERL Interface to Cisco AS5200 Access Router
 
-Version 1.00, December 17, 1999
+Version 1.01, December 20, 1999
 
 Gregor Mosheh (stigmata@blackangel.net)
 
@@ -257,11 +271,11 @@ This returns an array consisting of 2 items: The 1st element is the number of po
 
 =head1 EXAMPLE PROGRAMS
 
-portusage.pl - Prints a summary of port usage on a bank of modems
+   portusage.pl - Prints a summary of port usage on a bank of modems
 
-use RAS::AS5200;
-$used = $total = 0;
-foreach ('dialup1.example.com','dialup2.example.com','dialup3.example.com') {
+   use RAS::AS5200;
+   $used = $total = 0;
+   foreach ('dialup1.example.com','dialup2.example.com') {
    $foo = new RAS::AS5200(
       hostname => $_,
       login => '!root',
@@ -277,13 +291,13 @@ print "$used out of $total ports are in use.\n";
 
 ###
 
-usergrep.pl - Finds a user on a bank of modems
+   usergrep.pl - Finds a user on a bank of modems
 
-($username) = @ARGV;
-die "Usage: $0 <username>\nFinds the specified user.\n" unless $username ;
+   ($username) = @ARGV;
+   die "Usage: $0 <username>\nFinds the specified user.\n" unless $username ;
 
-use RAS::AS5200;
-foreach ('dialup1.example.com','dialup2.example.com','dialup3.example.com') {
+   use RAS::AS5200;
+   foreach ('dialup1.example.com','dialup2.example.com') {
    $foo = new RAS::AS5200(
       hostname => $_,
       login => '!root',
@@ -296,13 +310,13 @@ foreach ('dialup1.example.com','dialup2.example.com','dialup3.example.com') {
 
 ###
 
-userkill.pl - Kick a user off a bank of modems. Makes a great cron job. ;)
+   userkill.pl - Kick a user off a bank of modems. Makes a great cron job. ;)
 
-($username) = @ARGV;
-die "Usage: $0 <username>\nDisconnects the specified user.\n" unless $username ;
+   ($username) = @ARGV;
+   die "Usage: $0 <username>\nDisconnects the specified user.\n" unless $username ;
 
-use RAS::AS5200;
-foreach ('dialup1.example.com','dialup2.example.com','dialup3.example.com') {
+   use RAS::AS5200;
+   foreach ('dialup1.example.com','dialup2.example.com') {
    $foo = new RAS::AS5200(
       hostname => $_,
       login => '!root',
@@ -318,13 +332,17 @@ foreach ('dialup1.example.com','dialup2.example.com','dialup3.example.com') {
 
 In userkill(), I have not yet tested the killing of SeA:B addresses, which are assigned instead of tty addresses to ISDN users. When I get permission to nuke some ISDN customers, I'll test this. The killing of analog modem users (assigned tty addresses) seems to work perfectly.
 
-This is one of my first tries at doing PERL 5 stuff, having been satisfied for so many years with using only the PERL 4 features. Though this module seems to work without any problems, the code is probably kinda weak in places and could stand optimization. Any suggestions will be appreciated and credit will be given.
+Since we use this for port usage monitoring, new functions will be added slowly on an as-needed basis. If you need some specific functionality let me know and I'll see what I can do. If you write an addition for this, please send it in and I'll incororate it and give credit.
 
-More features are forthcoming. I realize that the existing set of functions is a bit bare. If you need special features, please ask and I'll work on them in my spare time. Alternately, you can write it yourself and send it in and I'll gladly incorporate it and give credit. And there's always the run_command method.
+I make some assumptions about router prompts based on what I have on hand for experimentation. If I make an assumption that doesn't apply to you (e.g. all prompts are /^[a-zA-Z0-9]+\>\s+$/) then it can cause two problems: pattern match timed out or a hang when any functions are used. A pattern match timeout can occur because of a bad password or a bad prompt. A hang is likely caused by a bad prompt. Check the regexps in the loop within run_command, and make sure your prompt fits this regex. If not, either fix the regex and/or (even better) PLEASE send me some details on your prompt and what commands you used to set your prompt. If you have several routers with the same login/password, make sure you're pointing to the right one. A Livingston PM, for example, has a different prompt than a HiPerARC - if you accidentally point to a ARC using RAS::PortMaster, you'll likely be able to log in, but run_command will never exit, resulting in a hang.
+
 
 =head1 CHANGES IN THIS VERSION
 
-1.00     First released version of RAS::AS5200. The AS5200 doesn't have a lot of cool features like the PortMaster or the HiPerARC, so some of my method implementations are really lame. Blame Cisco for making a lousy interface to a nice router and for not educating their tech support in its usage. If anyone's more familiar with the AS5200, I'd appreciate any suggestions.
+1.01     Improved the error handling a tad. Touched up the docs.
+
+1.00     First released version of RAS::AS5200.
+
 
 =head1 LICENSE AND WARRANTY
 

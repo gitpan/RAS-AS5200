@@ -58,7 +58,7 @@ print "\n\n";
 use RAS::AS5200;
 
 ### Create a new instance
-print "### Testing new() method for host $_\n\n";
+print "### Testing new() method for host $pm\n\n";
 $foo = new RAS::AS5200(
    hostname => $pm,
    password => $password,
@@ -73,8 +73,8 @@ print "\n\n";
 
 print "### Testing the run_command() method:\n";
 ($x,$y) = $foo->run_command('show modem','show users');
-print "Output of \'show modems\' on $_:\n@$x\n\n";
-print "Output of \'show users\' on $_:\n@$y\n\n";
+print "Output of \'show modems\' on $pm:\n@$x\n\n";
+print "Output of \'show users\' on $pm:\n@$y\n\n";
 
 print "### Testing portusage() method:\n";
 @x = $foo->portusage;
