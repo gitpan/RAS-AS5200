@@ -16,12 +16,21 @@ and run some benign commands to verify that
 things are working properly.
 Enter the hostname or IP address of a
 AS5200 that will be used for the tests.
-Enter nothing to skip the tests.
 EOF
 
 print "Hostname or IP of AS5200: ";
 chomp($pm = <STDIN>);
-exit unless $pm;
+
+
+print <<EOF;
+
+Please enter the login name used to log into 
+the AS5200 for the tests. For some older versions
+of the IOS, no login name is required.
+EOF
+
+print "Login for AS5200: ";
+chomp($login = <STDIN>);
 
 
 print <<EOF;
@@ -32,6 +41,19 @@ EOF
 
 print "Password for AS5200: ";
 chomp($password = <STDIN>);
+
+
+print <<EOF;
+
+Please enter a regular expression representing
+the prompt on the AS5200. Do not include delimiters
+or anchors. If you enter nothing, the default
+of '\\w*[>#]' will be used, which usually works
+just fine.
+EOF
+
+print "Prompt for AS5200: ";
+chomp($prompt= <STDIN>);
 
 
 print <<EOF;
@@ -63,8 +85,10 @@ $foo = new RAS::AS5200(
    hostname => $pm,
    password => $password,
    enablepassword => $enablepassword,
+   login => $login,
+   prompt => $prompt,
 );
-die "ERROR: Couldn't create object. Stopped " unless $foo;
+die "ERROR: There was a problem creating the object.\n" unless $foo;
 print "OK.\n\n";
 
 print "### Testing the printenv() method:\n";
@@ -81,6 +105,14 @@ print "### Testing portusage() method:\n";
 print "There are ", shift(@x), " modems in all.\n";
 print "There are ", scalar(@x), " users online. ";
 print "They are:\n@x\n\n";
+
+print "### Testing portusage() method:\n";
+%x = $foo->userports;
+print "USERNAME  \tPORTS\n";
+foreach (keys(%x)) {
+   print "$_", (' ' x (10 - length($_))), "\t", join("\t",@{$x{$_}}), "\n";
+}
+
 
 if ($testuser) {
    print "### Testing usergrep() method on user $testuser\n";
