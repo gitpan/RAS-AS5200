@@ -3,52 +3,61 @@
 #########################################################
 
 package RAS::AS5200;
-$VERSION = "1.01";
+$VERSION = "1.02";
 
-# The new method, of course
+use strict "subs"; use strict "refs";
+
+# This uses Net::Telnet to connect to the RAS
+use Net::Telnet ;
+
+# The name $ras will be used consistently as the
+# reference to the RAS::HiPerARC object we're handling
+
+# The constructor method, of course
 sub new {
-   my $class = shift ;
-   my $confarray = {} ;
-   %$confarray = @_ ;
-   bless $confarray ;
+   my($class) = shift ;
+   my($ras) = {} ;
+   %$ras = @_ ;
+    $ras->{'VERSION'} = $VERSION;
+   bless($ras);
 }
 
 
+# for debugging - printenv() prints to STDERR
+# the entire contents of %$ras
 sub printenv {
-   my($confarray) = $_[0];
-   print "VERSION = $VERSION\n";
-   while (($key,$value) = each(%$confarray)) { print "$key = $value\n"; }
+   my($ras) = shift;
+   while (($key,$value) = each(%$ras)) { warn "$key = $value\n"; }
 }
 
 
+# This runs the specified commands on the router and returns
+# a list of refs to arrays containing the commands' output
 sub run_command {
-   my($confarray) = shift;
-   use Net::Telnet ;
-   my($session,@returnlist,$command);
+   my($ras) = shift;
+   my(@returnlist);
 
    while ($command = shift) {
-      my(@output);
-      $session = new Net::Telnet (-prompt => '/as5200[#>]$/');
+      my($session) = new Net::Telnet (-prompt => '/as5200[#>]$/');
       $session->errmode("return");
-      $session->open($confarray->{hostname});
+      $session->open($ras->{hostname});
       if ($session->errmsg) {
-         warn "RAS::AS5200 ERROR: ", $session->errmsg, "\n"; return();
-      }
+         warn "ERROR: ",ref($ras),' - ',$session->errmsg,"\n"; return(); }
       $session->waitfor('/Password: $/');
       $session->print("");
       $session->waitfor('/Password: $/');
-      $session->print($confarray->{password});
+      $session->print($ras->{password});
       $session->waitfor($session->prompt);
       if ($session->errmsg) {
-         warn "RAS::AS5200 ERROR: ", $session->errmsg, "\n"; return();
-      }
+         warn "ERROR: ",ref($ras),' - ',$session->errmsg,"\n"; return(); }
+      my(@output);
 
       # If the command was prefixed with the ENABLE
       # keyword, go into enabled mode
       if ($command =~ s/^ENABLE //) {
          $session->print("enable");
          $session->waitfor('/Password: $/');
-         $session->print($confarray->{enablepassword});
+         $session->print($ras->{enablepassword});
          $session->waitfor($session->prompt);
          if ($session->errmsg) {
             warn "RAS::AS5200 ERROR: ", $session->errmsg, "\n"; return();
@@ -57,11 +66,10 @@ sub run_command {
       $session->print($command);
 
       while (1) {
-         local($line); $session->print(""); $line = $session->getline;
+         $session->print(""); my($line) = $session->getline;
          if ($session->errmsg) {
-            warn "RAS::AS5200 ERROR: ", $session->errmsg, "\n"; return();
-         }
-         if ($line eq "[confirm]") { $session-print("y"); next; }
+            warn "ERROR: ",ref($ras),' - ',$session->errmsg,"\n"; return(); }
+         if ($line eq "[confirm]") { $session->print("y"); next; }
          if ($line =~ /^as5200[#>]/) { $session->print("exit"); $session->close; last; }
          $line =~ s/^\s?--More--\s*\010+\s+\010+//;
          push(@output, $line);
@@ -79,56 +87,61 @@ sub run_command {
 } # end of run_command
 
 
+# usergrep() - takes a username and returns an array of
+# ports on which the user was found
 sub usergrep {
-   my($confarray) = $_[0];
-   my($username) = $_[1]; return unless $username;
-   my($output) = &run_command($confarray,'show users');
+   my($ras) = shift;
+   my($username) = shift; return() unless $username;
+   if ($ras->{truncateusernames}) { $username = substr($username,0,10); }
+   my($output) = $ras->run_command('show users');
    my(@ports);
 
    foreach (@$output) {
       local($port,$user);
       next unless (/^\s+\d+ tty \d+\s/ || /^\s+Se\d+\:\d+\s/);
       $port = unpack("x0 a12", $_) ; $port =~ s/^\s*\d* //; $port =~ s/\s*$//;
-      $user = unpack("x12 a10", $_); $user =~ s/^\s*//; $user =~ s/\s*$//;
+      $user = unpack("x13 a10", $_); $user =~ s/^\s*//; $user =~ s/\s*$//;
       ($user eq $username) && push(@ports,$port);
    }
    return(@ports);
 }
 
 
+# portusage() returns a list: # of ports, list of users
 sub portusage {
-   my($confarray) = $_[0];
-   my($interfaces,$connections) = &run_command($confarray,'sho isdn status','show users');
-   my(@users);
-   my($usedports); $usedports = 0;
+   my($ras) = shift;
+   my($interfaces,$connections) = $ras->run_command('sho isdn status','show users');
+   my(@users, $totalports);
 
-   $usedports = 23 * scalar(grep(/^ISDN Serial\S+ interface$/, @$interfaces));
+   $totalports = 23 * scalar(grep(/^ISDN Serial\S+ interface$/, @$interfaces));
 
    foreach (@$connections) {
-      local($port,$user);
+      my($port,$user);
       next unless (/^\s+\d+ tty \d+ / || /^\s+Se\d+\:\d+ /);
-      $user = unpack("x12 a10", $_); $user =~ s/^\s*(\S+)\s*$/$1/;
+      $user = unpack("x13 a10", $_); $user =~ s/^\s*(\S+)\s*$/$1/;
       next if ($user =~ /^\s*$/);
       push(@users,$user);
    }
 
-   return($usedports,@users);
+   return($totalports,@users);
 }
 
 
+# This does a usergrep() and then disconnects the specified user
 sub userkill {
-   my($confarray) = $_[0];
-   my($username); $username = $_[1]; return unless $username;
-   my(@killcommands);
-   my(@ports) = &usergrep($confarray,$username);
-   return() unless @ports;
+   my($ras) = shift;
+   my($username); $username = shift; return() unless $username;
+   if ($ras->{truncateusernames}) { $username = substr($username,0,10); }
+   my(@ports) = $ras->usergrep($username);
+   return('') unless @ports;
 
+   my(@killcommands);
    foreach (@ports) {
       if (/^tty/)   { push(@killcommands, "ENABLE clear line $_"); }
       elsif (/^Se/) { push(@killcommands, "ENABLE clear int $_"); }
    }
 
-   &run_command($confarray,@killcommands);
+   $ras->run_command(@killcommands);
    return(@ports);
 }
 
@@ -141,7 +154,7 @@ __END__;
 
 RAS::AS5200.pm - PERL Interface to Cisco AS5200 Access Router
 
-Version 1.01, December 20, 1999
+Version 1.02, January 17, 2000
 
 Gregor Mosheh (stigmata@blackangel.net)
 
@@ -184,17 +197,22 @@ At this time, the following methods are implemented:
 
 =item creating an object with new
 
-Call the new method while supplying the  "hostname", "login", "password", and "enablepassword" hash, and you'll get an object reference returned.
+Call the new method while supplying the "hostname", "login", "password", and "enablepassword" values, and you'll get an object reference returned.
 
    Example:
       use RAS::AS5200;
       $foo = new RAS::AS5200(
          hostname => 'dialup1.example.com',
          login => '!root',
-         password => 'mysecret'
+         password => 'mysecret',
+         truncateusernames => 'true'
       );
 
-At this time, the enablepassword is only required for the userkill() method, and can be undefined if you don't intend to use userkill()
+At this time, the enablepassword is only required for the userkill() method, and doesn't need to be defined if you don't intend to use userkill().
+
+Since there's no point in dynamically changing the hostname, login, etc. these settings are static and must be supplied to the constructor. No error will be returned if these settings are not specified, but your program will likely not get very far without at least a hostname, and a correct password tends to help, too. ;)
+
+If the "truncateusernames" option is set to non-null, then usernames supplied to user-seeking functions such as userkill() and usergrep() will be internally truncated to 10 characters. This is to work around a "feature" of the AS5200 that only the first 10 characters of a login name are displayed, which would cause usergrep('johnjjschmidt') to never work, as the AS5200 displays the login name as 'johnjjschm'. See the TRUNCATING USER NAMES section for more discussion on this.
 
 
 =item printenv
@@ -207,7 +225,7 @@ This is for debugging only. It prints to STDOUT a list of its configuration hash
 
 =item run_command
 
-This takes a list of commands to be executed on the AS5200, connects to the AS5200 and executes the commands, and returns a list of references to arrays containg the text of each command's output. 
+This takes a list of commands to be executed on the AS5200, executes the commands on the AS5200, and returns a list of references to arrays containg the text of each command's output. 
 
 Repeat: It doesn't return an array, it returns an array of references to arrays. Each array contains the text output of each command. Think of it as an array-enhanced version of PERL's `backtick` operator.
 
@@ -215,14 +233,14 @@ Some router functions (e.g. rebooting) ask for confirmation - confirmation will 
 
    Example:
       # Execute a command and print the output
-      $command = 'list conn';
+      $command = 'show modems';
       ($x) = $foo->run_command($command);
       print "Output of command \'$command\':\n", @$x ;
 
    Example:
       # Execute a string of commands
       # and show the output from one of them
-      (@output) = $foo->run_command('list interface','list con');
+      (@output) = $foo->run_command('show isdn status','show modems');
       print "Modems:\n@$output[0]\n\n";;
       print "Current connections:\n@$output[1]\n\n";;
 
@@ -232,9 +250,10 @@ In Cisco-land, some functions are only available in enabled mode. To specify tha
       # Reboot the router
       $foo->run_command('ENABLE reload');
 
+
 =item usergrep
 
-Supply a username as an argument, and usergrep will return an array of ports on which that user was found. Internally, this does a run_command("list connections") and parses the output.
+Supply a username as an argument, and usergrep will return an array of ports on which that user was found (thus, an empty list if they weren't found). An undefined value is returned if no username was supplied. Internally, this does a run_command('show users') and processes the output.
 
    Example:
       @ports = $foo->usergrep('gregor');
@@ -243,7 +262,7 @@ Supply a username as an argument, and usergrep will return an array of ports on 
 
 =item userkill
 
-This does a usergrep, but with a twist: it disconnects the user by resetting the modem on which they're connected. Like usergrep, it returns an array of ports to which the user was connected before they were reset.  This is safe to use if the specified user is not logged in.
+This does a usergrep, but with a twist: it disconnects the user by resetting the modem on which they're connected. Like usergrep, it returns an array of ports to which the user was connected before they were reset (or an empty list if they weren't found). The undefined value is returned if no username is supplied.
 
    Examples:
       @foo = $foo->userkill('gregor');
@@ -328,16 +347,25 @@ print "$used out of $total ports are in use.\n";
 }
 
 
+=head1 TRUNCATING USER NAMES
+
+A "feature" of the Cisco AS5200 is that only the first 10 characters of login names are displayed. As such, doing a usergrep('johnjjschmidt') would never find the fellow, as the AS5200 truncates the username to 'johnjjschm'.
+
+To work around this, you may set the "truncateusernames" flag in your constructor (see above). This will cause user-matching functions such as usergrep and userkill to internally truncate usernames to 10 characters for matching purposes. This means that usergrep('johnjjschmidt') would internally be treated as usergrep('johnjjschm') so that it would match.
+
+So, you have your choice of two evils. If you don't enable username truncation, you'll miss users with login names over 10 characters in length. If you enable it, you could accidentally userkill user 'johnjjschm' when you meant to kill 'johnjjschmidt'. Sorry - Cisco screwed up and we get to suffer for it.
+
+
 =head1 BUGS
 
-In userkill(), I have not yet tested the killing of SeA:B addresses, which are assigned instead of tty addresses to ISDN users. When I get permission to nuke some ISDN customers, I'll test this. The killing of analog modem users (assigned tty addresses) seems to work perfectly.
+The set of functions is somewhat bare. Since we use this for port usage monitoring, new functions will be added slowly on an as-needed basis. If you need some specific functionality let me know and I'll see what I can do. If you write an addition for this, please send it in and I'll incororate it and give credit.
 
-Since we use this for port usage monitoring, new functions will be added slowly on an as-needed basis. If you need some specific functionality let me know and I'll see what I can do. If you write an addition for this, please send it in and I'll incororate it and give credit.
-
-I make some assumptions about router prompts based on what I have on hand for experimentation. If I make an assumption that doesn't apply to you (e.g. all prompts are /^[a-zA-Z0-9]+\>\s+$/) then it can cause two problems: pattern match timed out or a hang when any functions are used. A pattern match timeout can occur because of a bad password or a bad prompt. A hang is likely caused by a bad prompt. Check the regexps in the loop within run_command, and make sure your prompt fits this regex. If not, either fix the regex and/or (even better) PLEASE send me some details on your prompt and what commands you used to set your prompt. If you have several routers with the same login/password, make sure you're pointing to the right one. A Livingston PM, for example, has a different prompt than a HiPerARC - if you accidentally point to a ARC using RAS::PortMaster, you'll likely be able to log in, but run_command will never exit, resulting in a hang.
+I make some assumptions about router prompts based on what I have on hand for experimentation. If I make an assumption that doesn't apply to you (e.g. all prompts are /^as5200[#>]\s+$/) then you'll get "pattern match timed out" errors. Check the regexps in the loop within run_command, and make sure your prompt fits this regex. If not, either fix the regex and/or (even better) PLEASE send me some details on your prompt and what commands you used to set your prompt so I can experiment with it. A similar situation can occur if you use the wrong RAS module to connect to a router - a Livingston PortMaster, for example, has a different prompt than a AS5200 - if you accidentally point to a PortMaster using RAS::AS5200, you'll get pattern match timeouts.
 
 
 =head1 CHANGES IN THIS VERSION
+
+1.02     Cleaned up the code substantially. Fixed a "bug" that truncated usernames at 8 characters. Added the "truncateusernames" option. Tested the userkill() function on ISDN clients - works.
 
 1.01     Improved the error handling a tad. Touched up the docs.
 
